@@ -1,0 +1,228 @@
+esphome:
+  name: opensmartspeaker
+  friendly_name: OpenSmartSpeaker
+  on_boot:
+    #- script.execute:
+    #    id: play_sound
+    #    priority: true
+    #    sound_file: !lambda return id(boot_sound);
+    - light.turn_on:
+        id: led_ww
+        blue: 100%
+        brightness: 60%
+        effect: fast pulse
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: "tNJZpGsA6Gm96KXBGfMuOS+9MYDVJuW6bGl2CUt/8jE="
+  on_client_connected:
+        then:
+          - delay: 50ms
+          - light.turn_off: led_ww
+          - micro_wake_word.start:
+  on_client_disconnected:
+        then:
+          - voice_assistant.stop: 
+
+ota:
+  - platform: esphome
+    password: "57982029fad2aba414b7768a830a222e"
+
+wifi:
+  ssid: TELUS8300
+  password: "8005882300"
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Esphome-Web-578A3C"
+    password: "iBh8HR6pf5lX"
+
+captive_portal:
+
+button:
+  - platform: restart
+    name: "Restart"
+    id: but_rest
+
+switch:
+  - platform: template
+    id: mute
+    name: mute
+    optimistic: true
+    on_turn_on: 
+      - micro_wake_word.stop:
+      - voice_assistant.stop:
+      - light.turn_on:
+          id: led_ww           
+          brightness: 60%
+    on_turn_off:
+      - micro_wake_word.start:
+      - light.turn_on:
+          id: led_ww           
+          brightness: 60%
+          effect: BlinkSlow 
+      - delay: 2s
+      - light.turn_off:
+          id: led_ww 
+   
+light:
+  - platform: monochromatic
+    id: led_ww
+    output: status_led
+    name: "StatusLight"
+    effects:
+      - strobe:
+          name: "BlinkSlow"
+          colors:
+            - state: true
+              duration: .5s
+            - state: false
+              duration: .5s
+
+output:
+  - platform: ledc
+    id: status_led
+    pin: GPIO33
+    
+          
+          
+# Audio and Voice Assistant Config          
+i2s_audio:
+  - id: i2s_in
+    i2s_lrclk_pin: GPIO26  #WS 
+    i2s_bclk_pin: GPIO27 #SCK
+  - id: i2s_speaker
+    i2s_lrclk_pin: GPIO14  #LRC 
+    i2s_bclk_pin: GPIO12 #BLCK
+
+microphone:
+  - platform: i2s_audio
+    id: va_mic
+    adc_type: external
+    sample_rate: 16000
+    i2s_din_pin: GPIO25 #SD pin on the INMP441
+    channel: left
+    pdm: false
+    i2s_audio_id: i2s_in
+    bits_per_sample: 32 bit
+    
+speaker:
+# Main audio output speaker config
+  - platform: i2s_audio
+    id: output_speaker
+    i2s_audio_id: i2s_speaker
+    sample_rate: 44100
+    dac_type: external
+    i2s_dout_pin: GPIO32   #  DIN Pin of the MAX98357A Audio Amplifier
+    channel: mono
+
+# Mixing speaker for VA and Media fed from resamplers
+  - platform: mixer
+    output_speaker: output_speaker
+    source_speakers: 
+      - id: va_mixing_input
+        timeout: never
+      - id: media_mixing_input
+        timeout: never
+
+# Resamplers for Voice Assistant and Media
+  - platform: resampler
+    id: va_resampling_speaker
+    sample_rate: 44100
+    bits_per_sample: 16
+    output_speaker: va_mixing_input
+  - platform: resampler
+    id: media_resampling_speaker
+    sample_rate: 44100
+    bits_per_sample: 16
+    output_speaker: media_mixing_input
+
+
+
+micro_wake_word:
+  on_wake_word_detected:
+    # then:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+    #- script.execute:
+    #    id: play_sound
+    #    priority: true
+    #    sound_file: !lambda return id(wake_word_triggered_sound);
+    - light.turn_on:
+        id: led_ww
+        brightness: 60%
+        effect: BlinkSlow
+  models:
+    - model: hey_jarvis
+    
+voice_assistant:
+  id: va
+  microphone: va_mic
+  noise_suppression_level: 2.0
+  volume_multiplier: 4.0
+  speaker: va_resampling_speaker
+  on_stt_end:
+       then: 
+         - light.turn_off: led_ww
+  on_error:
+          - micro_wake_word.start:  
+  on_end:
+        then:
+          - light.turn_off: led_ww
+          - wait_until:
+              not:
+                voice_assistant.is_running:
+          - micro_wake_word.start: 
+
+media_player:
+  - platform: speaker
+    id: external_media_player
+    name: MediaPlayer
+    internal: false
+    announcement_pipeline: 
+      speaker: va_resampling_speaker
+      format: MP3
+      sample_rate: 44100
+      num_channels: 1
+    media_pipeline: 
+      speaker: media_resampling_speaker
+      format: MP3
+      sample_rate: 44100
+    on_announcement:
+      - mixer_speaker.apply_ducking:
+          id: media_mixing_input
+          decibel_reduction: 20
+          duration: 0.0s
+
+    #files: 
+    #  - id: boot_sound
+    #    file: https://github.com/esphome/home-assistant-voice-pe/blob/dev/sounds/timer_finished.flac
+    #  - id: wake_word_triggered_sound
+    #    file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/wake_word_triggered.flac
+
+script:
+  # Script executed when we want to play sounds on the device.
+  - id: play_sound
+    parameters:
+      priority: bool
+      sound_file: "audio::AudioFile*"
+    then:
+      - lambda: |-
+          if (priority) {
+            id(external_media_player)
+              ->make_call()
+              .set_command(media_player::MediaPlayerCommand::MEDIA_PLAYER_COMMAND_STOP)
+              .set_announcement(true)
+              .perform();
+          }
+          if ( (id(external_media_player).state != media_player::MediaPlayerState::MEDIA_PLAYER_STATE_ANNOUNCING ) || priority) {
+            id(external_media_player)
+              ->play_file(sound_file, true, false);
+          }
