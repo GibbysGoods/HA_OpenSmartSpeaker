@@ -1,2 +1,8 @@
 # HA_OpenSmartSpeaker
-Open source smart speaker and voice assistant for home assistant using esphome, easily obtainable circuitry, and primarily 3D printed parts
+Open Smart Speaker aims to create a fully customizable and easily configurable smart speaker based around and similar to the Home Assistant Voice PE.
+
+Huge credit to Smart Home Circle for the code I used to setup the basic hardware. Much of the other code will be reverse engineered from the Voice PE code avainlable in this repo - https://github.com/esphome/home-assistant-voice-pe
+
+Part lists, links, and 3D print files for the speaker housing will be coming soon.
+
+
